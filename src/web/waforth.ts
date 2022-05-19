@@ -4,6 +4,8 @@ const isSafari =
   typeof navigator != "undefined" &&
   /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
+const PAD_OFFSET = 400;
+
 // eslint-disable-next-line no-unused-vars
 const arrayToBase64 =
   typeof Buffer === "undefined"
@@ -26,6 +28,14 @@ function loadString(memory: WebAssembly.Memory, addr: number, len: number) {
   );
 }
 
+function saveString(s: string, memory: WebAssembly.Memory, addr: number) {
+  const len = s.length;
+  const a = new Uint8Array(memory.buffer, addr, len);
+  for (let i = 0; i < len; ++i) {
+    a[i] = s.charCodeAt(i);
+  }
+}
+
 /**
  * JavaScript shell around the WAForth WebAssembly module.
  *
@@ -37,8 +47,7 @@ function loadString(memory: WebAssembly.Memory, addr: number, len: number) {
 class WAForth {
   core?: WebAssembly.Instance;
   #buffer?: number[];
-  #fns: Record<string, (v: Stack) => void>;
-  #stack?: Stack;
+  #fns: Record<string, (f: WAForth) => void>;
 
   /**
    * Callback that is called when a character needs to be emitted.
@@ -153,41 +162,51 @@ class WAForth {
         ////////////////////////////////////////
 
         call: () => {
-          const len = pop();
-          const addr = pop();
+          const len = this.pop();
+          const addr = this.pop();
           const fname = loadString(memory, addr, len);
           const fn = this.#fns[fname];
           if (!fn) {
             console.error("Unbound SCALL: %s", fname);
           } else {
-            fn(this.#stack!);
+            fn(this);
           }
         },
       },
     });
     this.core = instance.instance;
-
-    const pop = (): number => {
-      return (this.core!.exports.pop as any)();
-    };
-
-    const popString = (): string => {
-      const len = pop();
-      const addr = pop();
-      return loadString(memory, addr, len);
-    };
-
-    const push = (n: number): void => {
-      (this.core!.exports.push as any)(n);
-    };
-
-    this.#stack = {
-      pop,
-      popString,
-      push,
-    };
     table = this.core.exports.table as WebAssembly.Table;
     memory = this.core.exports.memory as WebAssembly.Memory;
+  }
+
+  memory(): WebAssembly.Memory {
+    return this.core!.exports.memory as WebAssembly.Memory;
+  }
+
+  here(): number {
+    return (this.core!.exports.here as any)() as number;
+  }
+
+  pop(): number {
+    return (this.core!.exports.pop as any)();
+  }
+
+  popString(): string {
+    const len = this.pop();
+    const addr = this.pop();
+    return loadString(this.memory(), addr, len);
+  }
+
+  push(n: number): void {
+    (this.core!.exports.push as any)(n);
+  }
+
+  pushString(s: string, offset = 0): number {
+    const addr = this.here() + PAD_OFFSET;
+    saveString(s, this.memory(), addr);
+    this.push(addr);
+    this.push(s.length);
+    return addr + PAD_OFFSET;
   }
 
   /**
@@ -219,15 +238,32 @@ class WAForth {
    * When an SCALL is done with `name` on the top of the stack, `fn` will be called (with the name popped off the stack).
    * Use `stack` to pop parameters off the stack, and push results back on the stack.
    */
-  bind(name: string, fn: (stack: Stack) => void) {
+  bind(name: string, fn: (f: WAForth) => void) {
     this.#fns[name] = fn;
   }
-}
 
-export interface Stack {
-  push(n: number): void;
-  pop(): number;
-  popString(): string;
+  /**
+   * Bind async `name` to SCALL in Forth.
+   *
+   * When an SCALL is done with `name` on the top of the stack, `fn` will be called (with the name popped off the stack).
+   * Expects an execution token on the top of the stack, which will be called when the async callback is finished.
+   * The execution parameter will be called with the success flag set.
+   */
+  bindAsync(name: string, fn: (f: WAForth) => Promise<void>) {
+    this.#fns[name] = async () => {
+      const cbxt = this.pop();
+      try {
+        await fn(this);
+        this.push(-1);
+      } catch (e) {
+        console.error(e);
+        this.push(0);
+      } finally {
+        this.push(cbxt);
+        this.interpret("EXECUTE");
+      }
+    };
+  }
 }
 
 export default WAForth;

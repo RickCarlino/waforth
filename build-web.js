@@ -6,7 +6,6 @@ const path = require("path");
 const fs = require("fs");
 const { createServer } = require("http");
 const { wasmTextPlugin } = require("./scripts/esbuild/wasm-text");
-const { forthPlugin } = require("./scripts/esbuild/forth");
 
 function withWatcher(config, handleBuildFinished = () => {}, port = 8880) {
   const watchClients = [];
@@ -60,6 +59,7 @@ let buildConfig = {
     path.join(__dirname, "src", "web", "tests", "tests"),
     path.join(__dirname, "src", "web", "benchmarks", "benchmarks"),
     path.join(__dirname, "src", "web", "examples", "prompt", "prompt"),
+    path.join(__dirname, "src", "web", "examples", "fetch", "fetch"),
     path.join(__dirname, "src", "web", "thurtle", "thurtle"),
   ],
   entryNames: dev ? "[name]" : "[name]-c$[hash]",
@@ -73,6 +73,7 @@ let buildConfig = {
     ".wasm": "binary",
     ".js": "jsx",
     ".fs": "text",
+    ".f": "text",
     ".svg": "file",
   },
   define: {
@@ -85,7 +86,6 @@ let buildConfig = {
   metafile: true,
   plugins: [
     wasmTextPlugin({ debug: true }),
-    forthPlugin(),
 
     // Resolve 'waforth' to the main entrypoint (for examples)
     {
@@ -120,6 +120,7 @@ async function handleBuildFinished(result) {
     ["WAForth Tests", "tests", "public/waforth/tests"],
     ["WAForh Benchmarks", "benchmarks", "public/waforth/benchmarks"],
     ["WAForth Prompt Example", "prompt", "public/waforth/examples/prompt"],
+    ["WAForth Fetch Example", "fetch", "public/waforth/examples/fetch"],
     ["Thurtle", "thurtle", "public/thurtle", true],
   ];
   for (const [title, base, outpath, bs] of indexes) {
